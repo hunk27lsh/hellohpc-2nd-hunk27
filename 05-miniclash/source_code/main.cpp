@@ -12,6 +12,7 @@ const uint32 MD5IV[] = { 0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476 };
 unsigned load_block(istream& i, uint32 block[]);
 void save_block(ostream& o, const uint32 block[]);
 void find_collision(const uint32 IV[], uint32 msg1block0[], uint32 msg1block1[], uint32 msg2block0[], uint32 msg2block1[], bool verbose = false);
+int run_tasks(const char* taskfile);
 
 #if 0
 
@@ -266,6 +267,10 @@ void test_all();
 
 int main(int argc, char** argv)
 {
+	// Batch mode: run every task in the given file, racing all available CPUs.
+	if (argc == 2 && argv[1][0] != '-')
+		return run_tasks(argv[1]);
+
 	seed32_1 = uint32(time(NULL));
 	seed32_2 = 0x12345678;
 

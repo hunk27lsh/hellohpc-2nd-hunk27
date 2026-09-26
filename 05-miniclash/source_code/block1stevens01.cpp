@@ -16,6 +16,7 @@ void find_block1_stevens_01(uint32 block[], const uint32 IV[])
 	
 	while (true) 
 	{
+		check_abort();
 		uint32 aa = Q[Qoff] & 0x80000000;
 
 		Q[Qoff + 2] = (xrng64() & 0x4db0e03e) | 0x32460441 | aa;

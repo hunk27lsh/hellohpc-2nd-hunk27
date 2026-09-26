@@ -2,7 +2,7 @@
 #include <vector>
 #include "main.hpp"
 
-uint32 seed32_1, seed32_2;
+thread_local uint32 seed32_1, seed32_2;
 
 void find_block0(uint32 block[], const uint32 IV[])
 {
@@ -22,6 +22,7 @@ void find_block0(uint32 block[], const uint32 IV[])
 
 	while (true)
 	{
+		check_abort();
 		Q[Qoff + 1] = xrng64();
 		Q[Qoff + 3] = (xrng64() & 0xfe87bc3f) | 0x017841c0;
 		Q[Qoff + 4] = (xrng64() & 0x44000033) | 0x000002c0 | (Q[Qoff + 3] & 0x0287bc00);
@@ -158,6 +159,8 @@ void find_block0(uint32 block[], const uint32 IV[])
 				// this changes m8, m9 and m12 (but not m10!)
 				for (unsigned counter4 = 0; counter4 < (1<<16); ++counter4)
 				{
+					if ((counter4 & 0x3ff) == 0)
+						check_abort();
 					uint32 q9 = Q[Qoff + 9] ^ q9mask[counter4];
 					block[12] = tt12 - FF(Q[Qoff + 12], Q[Qoff + 11], q10) - q9;
 					uint32 m8 = q9 - Q[Qoff + 8];

@@ -1,6 +1,6 @@
 CXX := g++
-CPPFLAGS := -O2 -march=native
-OBJS := block0.o block1.o block1stevens00.o block1stevens01.o block1stevens10.o block1stevens11.o block1wang.o main.o md5.o timer.o
+CPPFLAGS := -O3 -march=native -pthread -std=gnu++11 -funroll-loops
+OBJS := block0.o block1.o block1stevens00.o block1stevens01.o block1stevens10.o block1stevens11.o block1wang.o main.o md5.o timer.o tasks.o
 LIBS :=
 
 .PHONY := clean all

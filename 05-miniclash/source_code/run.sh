@@ -20,30 +20,7 @@ if [ ! -x "$BIN" ]; then
 	exit 1
 fi
 
-status=0
-n=0
-
-# Fields are space-separated: <input_file> <output_file1> <output_file2>.
-while read -r infile out1 out2 rest; do
-	# Skip blank lines.
-	[ -n "${infile:-}" ] || continue
-
-	if [ -z "${out2:-}" ] || [ -n "${rest:-}" ]; then
-		echo "$0: malformed line: $infile ${out1:-} ${out2:-} ${rest:-}" >&2
-		status=1
-		continue
-	fi
-
-	# -q quiets the per-collision banner, -p sets the prefix file (which is also
-	# copied into both outputs), -o names the two outputs and must come last.
-	if ! "$BIN" -q -p "$infile" -o "$out1" "$out2" >/dev/null; then
-		echo "$0: failed on $infile" >&2
-		status=1
-		continue
-	fi
-
-	n=$((n + 1))
-done < "$TASKS"
-
-echo "$0: generated $n collisions"
-exit "$status"
+# md5fastcoll reads the task file itself and uses every CPU in the current
+# affinity mask: per input file it races independent collision searches, one
+# per worker thread, and keeps the first result.
+exec "$BIN" "$TASKS"

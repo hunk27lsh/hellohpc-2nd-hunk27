@@ -25,6 +25,7 @@ void find_block1_wang(uint32 block[], const uint32 IV[])
 	
 	while (true) 
 	{
+		check_abort();
 		uint32 aa = Q[Qoff] & 0x80000000;
 		uint32 bb = 0x80000000 ^ aa;
 

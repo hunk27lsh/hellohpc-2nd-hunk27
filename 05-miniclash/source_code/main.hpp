@@ -4,14 +4,30 @@
 typedef unsigned int uint32;
 //typedef unsigned __int32 uint32;
 
+#include <atomic>
+
 void md5_compress(uint32 ihv[], const uint32 block[]);
 
 void find_block0(uint32 block[], const uint32 IV[]);
 void find_block1(uint32 block[], const uint32 IV[]);
 
+// Thrown by check_abort() when another worker already found the collision.
+struct search_aborted {};
+
+// Set (to a non-null pointer) only while a parallel search is running. It
+// points at the winner flag of the task being searched; a non-zero value means
+// the search has been superseded and should stop as soon as possible.
+extern thread_local const std::atomic<int>* g_abort_flag;
+
+inline void check_abort()
+{
+	if (g_abort_flag && g_abort_flag->load(std::memory_order_relaxed))
+		throw search_aborted();
+}
+
 // very fast inlined xorshift random number generator with period 2^64 - 1
 // by G. Marsaglia: http://www.jstatsoft.org/v08/i14/xorshift.pdf 
-extern uint32 seed32_1, seed32_2;
+extern thread_local uint32 seed32_1, seed32_2;
 inline uint32 xrng64()
 {
 	uint32 t = seed32_1 ^ (seed32_1 << 10);
