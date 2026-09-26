@@ -24,6 +24,7 @@
 #include <vector>
 
 #ifdef __linux__
+#include <pthread.h>
 #include <sched.h>
 #endif
 
@@ -33,6 +34,7 @@ void find_collision(const uint32 IV[], uint32 msg1block0[], uint32 msg1block1[],
 	uint32 msg2block0[], uint32 msg2block1[], bool verbose = false);
 
 thread_local const std::atomic<int>* g_abort_flag = nullptr;
+thread_local unsigned long long g_ns_block0 = 0, g_ns_block1 = 0;
 
 namespace {
 
@@ -56,19 +58,25 @@ protected:
 	int overflow(int c) override { return c; }
 };
 
-unsigned available_cpus()
+std::vector<unsigned> affinity_cpus()
 {
+	std::vector<unsigned> list;
 #ifdef __linux__
 	cpu_set_t set;
 	if (sched_getaffinity(0, sizeof(set), &set) == 0)
-	{
-		unsigned n = CPU_COUNT(&set);
-		if (n > 0)
-			return n;
-	}
+		for (unsigned c = 0; c < CPU_SETSIZE; ++c)
+			if (CPU_ISSET(c, &set))
+				list.push_back(c);
 #endif
-	unsigned n = std::thread::hardware_concurrency();
-	return n ? n : 1;
+	if (list.empty())
+	{
+		unsigned n = std::thread::hardware_concurrency();
+		for (unsigned c = 0; c < n; ++c)
+			list.push_back(c);
+	}
+	if (list.empty())
+		list.push_back(0);
+	return list;
 }
 
 // splitmix64 finalizer, used to derive independent seeds from one counter.
@@ -212,6 +220,7 @@ int run_tasks(const char* fn)
 		std::getenv("MINICLASH_MODE") && !std::strcmp(std::getenv("MINICLASH_MODE"), "queue");
 
 	const bool trace = std::getenv("MINICLASH_TRACE") != 0;
+	std::atomic<unsigned long long> ns_block0(0), ns_block1(0);
 	const std::chrono::steady_clock::time_point t0 =
 		std::chrono::steady_clock::now();
 	struct task_stat {
@@ -225,15 +234,23 @@ int run_tasks(const char* fn)
 		stat[i].done_ms.store(-1);
 	}
 
-	unsigned nthreads = available_cpus();
-	if (nthreads < 1)
-		nthreads = 1;
+	const std::vector<unsigned> cpus = affinity_cpus();
+	const unsigned nthreads = (unsigned)cpus.size();
 
 	std::vector<std::thread> threads;
 	threads.reserve(nthreads);
 	for (unsigned t = 0; t < nthreads; ++t)
 	{
-		threads.push_back(std::thread([&]() {
+		threads.push_back(std::thread([&, t]() {
+#ifdef __linux__
+			// one worker per available CPU: no migration, stable caches
+			{
+				cpu_set_t set;
+				CPU_ZERO(&set);
+				CPU_SET(cpus[t % cpus.size()], &set);
+				pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+			}
+#endif
 			for (;;)
 			{
 				std::size_t i;
@@ -293,6 +310,8 @@ int run_tasks(const char* fn)
 					}
 				}
 			}
+			ns_block0.fetch_add(g_ns_block0, std::memory_order_relaxed);
+			ns_block1.fetch_add(g_ns_block1, std::memory_order_relaxed);
 		}));
 	}
 	for (unsigned t = 0; t < threads.size(); ++t)
@@ -300,7 +319,9 @@ int run_tasks(const char* fn)
 
 	if (trace)
 	{
-		std::cerr << "tasks=" << n << " threads=" << nthreads << std::endl;
+		std::cerr << "tasks=" << n << " threads=" << nthreads
+			<< " block0_s=" << (ns_block0.load() / 1e9)
+			<< " block1_s=" << (ns_block1.load() / 1e9) << std::endl;
 		for (std::size_t i = 0; i < n; ++i)
 			std::cerr << "task " << i << " attempts=" << stat[i].attempts.load()
 				<< " done_ms=" << stat[i].done_ms.load() << std::endl;

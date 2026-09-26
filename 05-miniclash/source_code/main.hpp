@@ -14,6 +14,9 @@ void find_block1(uint32 block[], const uint32 IV[]);
 // Thrown by check_abort() when another worker already found the collision.
 struct search_aborted {};
 
+// Per-thread accumulated search time (ns) spent in find_block0 / find_block1.
+extern thread_local unsigned long long g_ns_block0, g_ns_block1;
+
 // Set (to a non-null pointer) only while a parallel search is running. It
 // points at the winner flag of the task being searched; a non-zero value means
 // the search has been superseded and should stop as soon as possible.
