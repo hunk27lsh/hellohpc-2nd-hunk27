@@ -207,17 +207,26 @@ int run_tasks(const char* fn)
 
 	const std::size_t n = cases.size();
 	std::vector<std::atomic<int> > winner(n);
+	std::vector<std::atomic<long long> > started(n);
 	for (std::size_t i = 0; i < n; ++i)
+	{
 		winner[i].store(0);
-	std::vector<block_result> results(n);
+		started[i].store(0);
+	}
 	std::atomic<std::size_t> next(0);
 	uint64_t base_seed = 0;
 	if (const char* s = std::getenv("MINICLASH_SEED"))
 		base_seed = strtoull(s, 0, 10);
 	std::atomic<uint64_t> attempt(base_seed);
-	// MINICLASH_MODE=queue: assign one search per task (no speculation).
-	const bool queue_mode =
-		std::getenv("MINICLASH_MODE") && !std::strcmp(std::getenv("MINICLASH_MODE"), "queue");
+	// Scheduling mode:
+	//   work  (default) - one search per task at a time; a worker that runs out
+	//                     of new tasks helps the oldest unfinished one, so the
+	//                     cores stay busy without multiplying work needlessly
+	//   race            - all workers always race the first unfinished task
+	//   queue           - one full search per task, no speculative help
+	const char* mode_env = std::getenv("MINICLASH_MODE");
+	const int mode = mode_env && !std::strcmp(mode_env, "queue") ? 1
+		: mode_env && !std::strcmp(mode_env, "race") ? 2 : 0;
 
 	const bool trace = std::getenv("MINICLASH_TRACE") != 0;
 	std::atomic<unsigned long long> ns_block0(0), ns_block1(0);
@@ -251,28 +260,9 @@ int run_tasks(const char* fn)
 				pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
 			}
 #endif
-			for (;;)
-			{
-				std::size_t i;
-				if (queue_mode)
-				{
-					i = next.fetch_add(1);
-					if (i >= n)
-						break;
-				}
-				else
-				{
-					i = next.load(std::memory_order_acquire);
-					if (i >= n)
-						break;
-					if (winner[i].load(std::memory_order_relaxed) != 0)
-					{
-						std::size_t expected = i;
-						next.compare_exchange_strong(expected, i + 1);
-						continue;
-					}
-				}
-
+			// Run one full search for task i; claim and write the result if
+			// this worker is the first to finish it.
+			auto search_task = [&](std::size_t i) {
 				block_result local;
 				seed_search(attempt.fetch_add(1) + 1);
 				if (trace)
@@ -290,25 +280,72 @@ int run_tasks(const char* fn)
 				}
 				g_abort_flag = nullptr;
 				if (!found)
-					continue;
-
+					return;
 				int expected = 0;
 				if (winner[i].compare_exchange_strong(expected, 1))
 				{
-					results[i] = local;
 					if (trace)
 						stat[i].done_ms.store(std::chrono::duration_cast<
 							std::chrono::milliseconds>(std::chrono::steady_clock::now()
 								- t0).count());
-					if (!write_case(cases[i], results[i]))
+					if (!write_case(cases[i], local))
 						std::cerr << "task " << i << ": failed to write output"
 							<< std::endl;
-					if (!queue_mode)
+				}
+			};
+
+			for (;;)
+			{
+				if (mode == 2)
+				{
+					// race: everyone on the first unfinished task
+					std::size_t i = next.load(std::memory_order_acquire);
+					if (i >= n)
+						break;
+					if (winner[i].load(std::memory_order_relaxed) != 0)
 					{
-						std::size_t exp = i;
-						next.compare_exchange_strong(exp, i + 1);
+						std::size_t expected = i;
+						next.compare_exchange_strong(expected, i + 1);
+						continue;
+					}
+					search_task(i);
+					continue;
+				}
+
+				std::size_t i = next.fetch_add(1);
+				if (i < n)
+				{
+					if (winner[i].load(std::memory_order_relaxed) == 0)
+					{
+						started[i].store(std::chrono::duration_cast<
+							std::chrono::milliseconds>(std::chrono::steady_clock::now()
+								- t0).count(), std::memory_order_relaxed);
+						search_task(i);
+					}
+					continue;
+				}
+
+				if (mode == 1)
+					break;
+
+				// work: no unassigned task left, help the oldest unsolved one
+				std::size_t j = n;
+				long long oldest = 0;
+				for (std::size_t k = 0; k < n; ++k)
+				{
+					if (winner[k].load(std::memory_order_relaxed) == 0)
+					{
+						long long s = started[k].load(std::memory_order_relaxed);
+						if (j == n || s < oldest)
+						{
+							j = k;
+							oldest = s;
+						}
 					}
 				}
+				if (j == n)
+					break;
+				search_task(j);
 			}
 			ns_block0.fetch_add(g_ns_block0, std::memory_order_relaxed);
 			ns_block1.fetch_add(g_ns_block1, std::memory_order_relaxed);
