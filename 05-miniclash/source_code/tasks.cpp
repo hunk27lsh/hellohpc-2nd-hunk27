@@ -207,10 +207,12 @@ int run_tasks(const char* fn)
 
 	const std::size_t n = cases.size();
 	std::vector<std::atomic<int> > winner(n);
+	std::vector<std::atomic<int> > active(n);
 	std::vector<std::atomic<long long> > started(n);
 	for (std::size_t i = 0; i < n; ++i)
 	{
 		winner[i].store(0);
+		active[i].store(0);
 		started[i].store(0);
 	}
 	std::atomic<std::size_t> next(0);
@@ -265,6 +267,7 @@ int run_tasks(const char* fn)
 			auto search_task = [&](std::size_t i) {
 				block_result local;
 				seed_search(attempt.fetch_add(1) + 1);
+				active[i].fetch_add(1, std::memory_order_relaxed);
 				if (trace)
 					stat[i].attempts.fetch_add(1);
 				g_abort_flag = &winner[i];
@@ -279,6 +282,7 @@ int run_tasks(const char* fn)
 					found = false;
 				}
 				g_abort_flag = nullptr;
+				active[i].fetch_sub(1, std::memory_order_relaxed);
 				if (!found)
 					return;
 				int expected = 0;
@@ -328,19 +332,28 @@ int run_tasks(const char* fn)
 				if (mode == 1)
 					break;
 
-				// work: no unassigned task left, help the oldest unsolved one
+				// work: no unassigned task left. Help the unsolved task with
+				// the fewest active searches (oldest one as tie-break), so the
+				// idle cores are spread over the remaining tasks instead of
+				// piling up on a single one.
+				const bool help_oldest = std::getenv("MINICLASH_HELP")
+					&& !std::strcmp(std::getenv("MINICLASH_HELP"), "oldest");
 				std::size_t j = n;
+				int fewest = 0;
 				long long oldest = 0;
 				for (std::size_t k = 0; k < n; ++k)
 				{
-					if (winner[k].load(std::memory_order_relaxed) == 0)
+					if (winner[k].load(std::memory_order_relaxed) != 0)
+						continue;
+					int a = active[k].load(std::memory_order_relaxed);
+					long long s = started[k].load(std::memory_order_relaxed);
+					if (j == n
+						|| (help_oldest ? (s < oldest)
+							: (a < fewest || (a == fewest && s < oldest))))
 					{
-						long long s = started[k].load(std::memory_order_relaxed);
-						if (j == n || s < oldest)
-						{
-							j = k;
-							oldest = s;
-						}
+						j = k;
+						fewest = a;
+						oldest = s;
 					}
 				}
 				if (j == n)
