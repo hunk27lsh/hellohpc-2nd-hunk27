@@ -16,7 +16,7 @@ cd "$HERE/source_code"
 
 ncpu="$(nproc)"
 echo "### host=$(hostname) nproc=$ncpu"
-first_cpu="$(taskset -pc $$ | awk -F': ' '{print $2}' | cut -d, -f1)"
+first_cpu="$(taskset -pc $$ | awk -F': ' '{print $2}' | cut -d, -f1 | cut -d- -f1)"
 
 echo "### build"
 make clean >/dev/null
